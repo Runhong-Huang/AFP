@@ -99,22 +99,7 @@ def grltnoa():
 
 
 
-#%% calculate the gross profitability 
-def grltnoa():
-    data = conn.raw_sql("""
-                    select gvkey, datadate,
-                    gp
-                    from comp.funda
-                    where indfmt='INDL' 
-                    and datafmt='STD'
-                    and popsrc='D'
-                    and consol='C'
-                    and datadate >= '01/01/1976'
-                    and datadate <= '01/01/2019'
-                    """)
-    
-    
-    return data
+
 
 #%% calculate the size 
 def log_size():
@@ -135,10 +120,175 @@ def log_size():
     
     return data
 
-a = size()
+
+#%% calculate the industry adjuested size 
+  
+def mve_ia():
+    data1 = conn.raw_sql("""
+                      select a.permno, a.permco, a.date, a.shrout, a.prc, b.siccd
+                      from crsp.msf as a
+                      left join crsp.msenames as b
+                      on a.permno=b.permno
+                      and b.namedt<=a.date
+                      and a.date<=b.nameendt
+                      where a.date between '01/01/1976' and '01/01/2019'
+                      and b.exchcd between 1 and 3
+                      """) 
+    
+    data1 = data[data.siccd != 0.0]
+    data1 = data1[data1.siccd.notna()]
+    
+    data1.siccd = data1.siccd.astype(str).str[:2].astype(int)
+    
+    data1['mc'] = np.log(data1.prc * data1.shrout)
+    
+    tmp = data1.groupby(['date', 'siccd']).mc.mean()
+    tmp = tmp.reset_index()
+    
+    data1 = data1.merge(tmp , on = ['date','siccd'],suffixes=('', '_mean'))
+    
+    data1['mve_ia'] = data1.mc - data1.mc_mean
+    data1 = data1[['permno', 'date', 'mve_ia']]
+    
+    return data1
+
 
 
 #%%
 
-data = pchcurrat()
-a = pchquick()
+
+data = conn.raw_sql("""
+                    select gvkey, datadate,
+                    at,lt,ib,gp, sale, che 
+                    from comp.funda
+                    where indfmt='INDL' 
+                    and datafmt='STD'
+                    and popsrc='D'
+                    and consol='C'
+                    and datadate >= '01/01/1976'
+                    and datadate <= '01/01/2019'
+                    """)
+
+
+#%% calculate the return on equity from q factor 
+def roeq(data):
+    
+    data['bq'] = data['at'] - data['lt']
+    data['roeq'] = data['ib'] / data['bq']
+    data = data[['gvkey', 'datadate', 'roeq']]
+    return data 
+
+#%% calculate the gross profitability 
+
+def gp(data):
+    data = data[['gvkey', 'datadate', 'gp']]
+    return data 
+    
+#%% calcualte the sale to cash 
+    
+def salecash(data):
+    
+    data['sale/cash'] = data['sale'] / data['che']
+    data = data[['gvkey', 'datadate', 'sale/cash']]
+    return data 
+
+#%%
+    # pull daily data to calculat ill 
+    # chage date range !
+    
+crsp_d = conn.raw_sql("""
+                      select a.permno, a.permco, a.date, a.ret, a.vol,a.shrout, a.prc
+                      from crsp.dsf as a
+                      left join crsp.msenames as b
+                      on a.permno=b.permno
+                      and b.namedt<=a.date
+                      and a.date<=b.nameendt
+                      where a.date between '12/01/2018' and '01/01/2019'
+                      and b.exchcd between 1 and 3
+                      """) 
+
+
+
+#%%
+
+def ill(daily):
+    daily['date'] = pd.to_datetime(daily['date'])
+    daily['month'] = daily['date'].dt.to_period('M')
+    
+    
+    daily['ill'] = daily['ret'] / (daily['prc'] * daily['vol'])
+    
+    tmp = daily.groupby(['permno', 'month']).sum().ret
+    tmp =tmp.reset_index()
+    
+    tmp.columns = ['permno','month','ill']
+    
+    #monthly.merge(tmp, on = ['permnco','month'])
+    
+    
+    return tmp
+
+
+#%%
+    
+    
+crsp_m = conn.raw_sql("""
+                      select a.permno, a.permco, a.date, a.ret, a.vol,a.shrout, a.prc
+                      from crsp.msf as a
+                      left join crsp.msenames as b
+                      on a.permno=b.permno
+                      and b.namedt<=a.date
+                      and a.date<=b.nameendt
+                      where a.date between '01/01/2014' and '01/01/2019'
+                      and b.exchcd between 1 and 3
+                      """) 
+
+
+#%%
+
+def std_dolvol(data):
+    
+    data['date'] = pd.to_datetime(data['date'])
+    
+    data['dolvol'] = data['vol'] * data['prc']
+    
+    tmp = data.groupby(['permco'])['dolvol'].rolling(36, min_periods=24).std()
+    tmp = tmp.reset_index()
+    tmp = tmp.set_index('level_1')
+    
+    
+    data = data.merge(tmp)
+    data['dolvol_log_std'] = np.log(data['dolvol'])
+    data = data[['permco', 'date', 'dolvol_log_std']]
+    
+    return data
+
+
+
+
+
+#%%
+
+def std_turn(data):
+    data['date'] = pd.to_datetime(data['date'])
+    
+    data['turn'] = data['vol'] * data['shrout']
+    tmp = data.groupby(['permco'])['turn'].rolling(24, min_periods=12).std()
+    tmp = tmp.reset_index()
+    tmp = tmp.set_index('level_1')
+    
+    data = data.merge(tmp, left_index = True, right_index = True  )
+    data['dolvol_log_turn'] = np.log(data['turn_y'])
+    data = data[["permno","date", "dolvol_log_turn"]]
+    
+    return data
+    
+    
+    
+    
+x = std_turn(crsp_m)
+
+
+
+
+
